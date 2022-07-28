@@ -2,7 +2,7 @@
 
 from setup_logger import *
 from antlr_plsql import *
-from ast import walk
+from ast import walk,dump
 from subprocess import *
 import astunparse
 import sys
@@ -23,33 +23,43 @@ will_not_parse = '''
 '''
 
 pl1 = '''
-procedure setGlobals(p_company in test_data_pay_group.orgz_ref%type,
-                     p_manager in varchar2) is 
+procedure setGlobals(p_company in test_data_pay_group.orgz_ref%type) is 
 
 begin
-	select company_prefix1,company_prefix2
-	into g_prefix_1, g_prefix_2
-	from test_data_pay_group
-	where orgz_ref  = p_company;
-
-	select p_manager,
-		   forename,
-		   surname
-	into
-	g_manager,
-	g_manager_forname,
-	g_manager_surname
-	from hr_person
-	where personnel_no = p_manager;
+    
+    select company_prefix1,company_prefix2
+    into g_prefix_1, g_prefix_2
+    from test_data_pay_group
+    where orgz_ref  = p_company;
 
 end setGlobals;
+procedure set_employee_menu_options is
 
+begin
+
+    insert into core_menu_group(group_name, system_id, menu_id)
+    values('COREPORTAL_EMPLOYEE', 'COCP', 'MAIN_MENU.COREPORTAL_REMOTE_TIMESHEET');
+
+    insert into core_menu_group(group_name, system_id, menu_id)
+    values('COREPORTAL_EMPLOYEE', 'COCP', 'MAIN_MENU.EMPTIMESHEETSWEEKCLKS');
+
+    insert into core_menu_group(group_name, system_id, menu_id)
+    values('COREPORTAL_EMPLOYEE', 'COCP', 'MAIN_MENU.TIMESHEET_EMP_SUMMARY');
+
+    insert into core_menu_group(group_name, system_id, menu_id)
+    values('COREPORTAL_EMPLOYEE', 'COCP', 'MAIN_MENU.TIMESHEET_INPUT_V2_EMPLOYEE');
+
+    insert into core_menu_group(group_name, system_id, menu_id)
+    values('COREPORTAL_EMPLOYEE', 'COCP', 'MAIN_MENU.TIMESHEET_INPUT_V2');
+
+    insert into core_menu_group(group_name, system_id, menu_id)
+    values('COREPORTAL_EMPLOYEE', 'COCP', 'MAIN_MENU.EMPTIMESHEETS');
+
+end set_employee_menu_options;
 '''
 def main():
     # lines = open('/Users/martin/CoreHR_Projects/roster/Roster_Test_Suite/CONFIGS/cost_roster_data_setup.bod').read()
     lines = open('/Users/martin/CoreHR_Projects/roster/Roster_Test_Suite/CONFIGS/timesheet_config.bod').read()
-
-    # t1 = ast.parse(plsql1)
 
     # Generates huge lines of error output in parsing..just want to see what line is not parsing !!
     #  so use the contextlib to send stderr to help.txt file !!
@@ -66,8 +76,8 @@ def main():
         t1 = type(node)
         if t1 == ast.UpdateStmt:
             logger.info (f'{sun}{node.table.fields}')
-            # print (node.where_clause)
-            # print (node.from_clause)
+            # logger.info (node.where_clause)
+            # logger.info (node.from_clause)
             for upd in node.updates:
                 logger.info (f'   {upd.column.fields}')
                 if type(upd.expression) == list:
@@ -81,13 +91,36 @@ def main():
                     expr1 = upd.expression
                     logger.info (f'{tick}{type(expr1.left)}{type(expr1.op)}{type(expr1.right)}')
                 else:
-                    logger.info (f'{cross_mark} {type(upd.expression)}')
+                    logger.info (f'{globe} {type(upd.expression)}')
+        elif t1 == ast.InsertStmt:
+            try:
+                table_name = node.table.get_text()
+                cols = []
+                vals = []
+                item = None
+                for item in node.columns:
+                    cols.append (item.get_text())
+                for item in node.values:
+                    if type(item) == list:
+                        vals += [x.value for x in item]
+                    else:
+                        vals.append(item.value)
+
+                iclause = ''
+                for cname,val in zip(cols,vals):
+                    iclause += f'{cname}={val},'
+                iclause = iclause.strip(',')
+
+                insert_stmt = f'ins1 = insert({table_name}).values({iclause})'
+                logger.info (f'   {sun} {insert_stmt}')
+                logger.info (f'   {sun} self.session.execute(ins1)')
+                logger.info (f'   {sun} self.session.commit()')
+            except Exception as inst:
+                logger.info(f'{cross_mark}{inst}')
+                logger.info (dump(node))
+
 
         elif t1 == ast.SelectStmt:
-            for clause in [node.target_list, node.from_clause, node.into_clause]:
-                logger.info (f'{tick}{type(clause)}')
-                for item in clause:
-                    logger.info (item.get_text())
             table_name  = f'{node.from_clause[0].get_text()}'
             select_stmt = f'res = self.find({table_name}).filter(F1).one()'
 
@@ -102,18 +135,22 @@ def main():
             logger.info (f'{sun} {select_stmt}')
 
             assigns = []
-            for x,y in zip(node.target_list,node.into_clause):
-                cname = x.get_text()
-                varname = y.get_text()
-                assigns.append(f'{varname} = res.{cname}')
+            try:
+                for x,y in zip(node.target_list,node.into_clause):
+                    cname = x.get_text()
+                    varname = y.get_text()
+                    assigns.append(f'{varname} = res.{cname}')
+            except Exception as inst:
+                logger.info (f'{cross_mark} {inst}')
+                logger.info (f'{cross_mark} {dump(node)}')
+
             for astmt in assigns:
                 logger.info (f'{sun} {astmt}')
-
-
 
         # doesn't recognize ast.Create_procedure_body as a class type to be compared to
         # (Dynamic class?) , so match the string instead
         elif 'Create_procedure_body' in str(t1):
+            logger.info(dump(node))
             pname = node.procedure_name.get_text()
             plist = []
             for item in node.parameter:
@@ -122,7 +159,7 @@ def main():
             # Generate Python method definition
             logger.info (f'{sun} def {pname}({",".join(plist)}):')
         else:
-            logger.info (t1)
+            pass
             # if t1 == ast.Create_procedure_body:
             #     logger.info (f'{sun}{sun}{sun}{sun}{sun}{sun}')
 if __name__ == '__main__':
