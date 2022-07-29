@@ -23,40 +23,62 @@ will_not_parse = '''
 '''
 
 pl1 = '''
-procedure setGlobals(p_company in test_data_pay_group.orgz_ref%type) is 
+procedure update_calendar_period (p_company in test_data_pay_group.orgz_ref%type ) is 
 
-begin
-    
-    select company_prefix1,company_prefix2
-    into g_prefix_1, g_prefix_2
-    from test_data_pay_group
-    where orgz_ref  = p_company;
+    cursor get_current_period is
+    select period
+    from ct_calendar
+    where company = p_company
+    and sysdate between start_date and start_date + 6;
 
-end setGlobals;
-procedure set_employee_menu_options is
+    l_current_period number;
 
-begin
+    begin
 
-    insert into core_menu_group(group_name, system_id, menu_id)
-    values('COREPORTAL_EMPLOYEE', 'COCP', 'MAIN_MENU.COREPORTAL_REMOTE_TIMESHEET');
+    open get_current_period;
+    fetch get_current_period into l_current_period;
+    close get_current_period;
 
-    insert into core_menu_group(group_name, system_id, menu_id)
-    values('COREPORTAL_EMPLOYEE', 'COCP', 'MAIN_MENU.EMPTIMESHEETSWEEKCLKS');
+    update ct_param set current_period = l_current_period where company = p_company;
+    update ct_calendar set completed_ind = 'Y' where company = p_company and period < l_current_period;
 
-    insert into core_menu_group(group_name, system_id, menu_id)
-    values('COREPORTAL_EMPLOYEE', 'COCP', 'MAIN_MENU.TIMESHEET_EMP_SUMMARY');
+end update_calendar_period;
 
-    insert into core_menu_group(group_name, system_id, menu_id)
-    values('COREPORTAL_EMPLOYEE', 'COCP', 'MAIN_MENU.TIMESHEET_INPUT_V2_EMPLOYEE');
-
-    insert into core_menu_group(group_name, system_id, menu_id)
-    values('COREPORTAL_EMPLOYEE', 'COCP', 'MAIN_MENU.TIMESHEET_INPUT_V2');
-
-    insert into core_menu_group(group_name, system_id, menu_id)
-    values('COREPORTAL_EMPLOYEE', 'COCP', 'MAIN_MENU.EMPTIMESHEETS');
-
-end set_employee_menu_options;
 '''
+
+def process_binary_expr(node):
+    pylines  = []
+    if type(node.left) == ast.Identifier:
+        left = node.left.get_text()
+    elif type(node.left) == ast.BinaryExpr:
+        left = process_binary_expr(node.left)
+    if type(node.op) == ast.Terminal:
+        op = node.op.get_text()
+        if op == '=': op = '=='
+    if type(node.right) == ast.Identifier:
+        right = node.right.get_text()
+    elif type(node.right) == ast.BinaryExpr:
+        right = process_binary_expr(node.right)
+
+    return f'{left} {op} {right}'
+
+def process_update (node):
+    '''
+    :param node:
+    :return:
+    '''
+    pylines = []
+    print  (f'{sun}{node.table.fields}')
+    for upd in node.updates:
+        if type(upd.column) == ast.Identifier:
+            print (upd.column.get_text())
+        if type(upd.expression) == ast.Identifier:
+            print (upd.expression.get_text())
+
+    wclause = node.where_clause
+    if type(wclause) == ast.BinaryExpr:
+        res = process_binary_expr(wclause)
+        print (res)
 
 
 def process_select(node):
@@ -120,6 +142,7 @@ def process_insert(node):
 
     return pylines
 
+
 def main():
     # lines = open('/Users/martin/CoreHR_Projects/roster/Roster_Test_Suite/CONFIGS/cost_roster_data_setup.bod').read()
     lines = open('/Users/martin/CoreHR_Projects/roster/Roster_Test_Suite/CONFIGS/timesheet_config.bod').read()
@@ -137,29 +160,9 @@ def main():
     # See: https://github.com/datacamp/antlr-plsql/blob/master/antlr_plsql/ast.py
     for node in walk(t1):
         t1 = type(node)
-        if t1 == ast.UpdateStmt:
-            logger.info (f'{sun}{node.table.fields}')
-            # logger.info (node.where_clause)
-            # logger.info (node.from_clause)
-            for upd in node.updates:
-                logger.info (f'   {upd.column.fields}')
-                if type(upd.expression) == list:
-                    # logger.info (f'{tick}{type(upd.expression)}')
-                    logger.info (f'   {upd.expression}')
-                elif type(upd.expression) == ast.Terminal:
-                    logger.info (f'{upd.expression.get_text()}')
-                elif type(upd.expression) == ast.Call:
-                    logger.info (f'{tick}{upd.expression.name}{upd.expression.args}')
-                elif type(upd.expression) == ast.BinaryExpr:
-                    expr1 = upd.expression
-                    logger.info (f'{tick}{type(expr1.left)}{type(expr1.op)}{type(expr1.right)}')
-                else:
-                    logger.info (f'{globe} {type(upd.expression)}')
-
-
         # doesn't recognize ast.Create_procedure_body as a class type to be compared to
         # (Dynamic class?) , so match the string instead
-        elif 'Create_procedure_body' in str(t1):
+        if 'Create_procedure_body' in str(t1):
             pname = node.procedure_name.get_text()
             plist = []
             for item in node.parameter:
@@ -177,9 +180,10 @@ def main():
                             python_code = process_insert(snode)
                             for item in python_code:
                                 print (item)
+                        elif type(snode) == ast.UpdateStmt:
+                            python_code = process_update(snode)
         else:
             pass
-            # if t1 == ast.Create_procedure_body:
-            #     logger.info (f'{sun}{sun}{sun}{sun}{sun}{sun}')
+
 if __name__ == '__main__':
     main()
