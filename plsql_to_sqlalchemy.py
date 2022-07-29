@@ -2,7 +2,7 @@
 
 from setup_logger import *
 from antlr_plsql import *
-from ast import walk,dump
+from ast import walk,dump,iter_child_nodes
 from subprocess import *
 import astunparse
 import sys
@@ -57,6 +57,69 @@ begin
 
 end set_employee_menu_options;
 '''
+
+
+def process_select(node):
+    table_name  = f'{node.from_clause[0].get_text()}'
+    select_stmt = f'res = self.find({table_name}).filter(F1).one()'
+    pylines = []
+
+    c1 = node.where_clause
+    left = c1.left.get_text()
+    right = c1.right.get_text()
+    op = c1.op.get_text()
+    if op == '=':
+        op = '=='
+    filter = f'F1 = {table_name}.{left} {op} {right}'
+    pylines.append(f'   {filter}')
+    pylines.append(f'   {select_stmt}')
+    try:
+        for x,y in zip(node.target_list,node.into_clause):
+            cname = x.get_text()
+            varname = y.get_text()
+            pylines.append(f'   {varname} = res.{cname}')
+    except Exception as inst:
+        logger.info (f'{cross_mark} {inst}')
+        logger.info (f'{cross_mark} {dump(node)}')
+
+    return (pylines)
+
+# TODO: Detect multiple inserts to same table and use for loop
+def process_insert(node):
+    '''
+    :param node:
+    :return:
+    '''
+    pylines = []
+    try:
+        table_name = node.table.get_text()
+        cols = []
+        vals = []
+        item = None
+        for item in node.columns:
+            cols.append (item.get_text())
+        for item in node.values:
+            if type(item) == list:
+                vals += [x.value for x in item]
+            else:
+                vals.append(item.value)
+
+        iclause = ''
+        for cname,val in zip(cols,vals):
+            iclause += f'{cname}={val},'
+        iclause = iclause.strip(',')
+
+        insert_stmt = f'ins1 = insert({table_name}).values({iclause})'
+        pylines.append (f'   {insert_stmt}')
+        pylines.append (f'   self.session.execute(ins1)')
+        pylines.append (f'   self.session.commit()')
+
+    except Exception as inst:
+        logger.info(f'{cross_mark}{inst}')
+        logger.info (dump(node))
+
+    return pylines
+
 def main():
     # lines = open('/Users/martin/CoreHR_Projects/roster/Roster_Test_Suite/CONFIGS/cost_roster_data_setup.bod').read()
     lines = open('/Users/martin/CoreHR_Projects/roster/Roster_Test_Suite/CONFIGS/timesheet_config.bod').read()
@@ -92,72 +155,28 @@ def main():
                     logger.info (f'{tick}{type(expr1.left)}{type(expr1.op)}{type(expr1.right)}')
                 else:
                     logger.info (f'{globe} {type(upd.expression)}')
-        elif t1 == ast.InsertStmt:
-            try:
-                table_name = node.table.get_text()
-                cols = []
-                vals = []
-                item = None
-                for item in node.columns:
-                    cols.append (item.get_text())
-                for item in node.values:
-                    if type(item) == list:
-                        vals += [x.value for x in item]
-                    else:
-                        vals.append(item.value)
 
-                iclause = ''
-                for cname,val in zip(cols,vals):
-                    iclause += f'{cname}={val},'
-                iclause = iclause.strip(',')
-
-                insert_stmt = f'ins1 = insert({table_name}).values({iclause})'
-                logger.info (f'   {sun} {insert_stmt}')
-                logger.info (f'   {sun} self.session.execute(ins1)')
-                logger.info (f'   {sun} self.session.commit()')
-            except Exception as inst:
-                logger.info(f'{cross_mark}{inst}')
-                logger.info (dump(node))
-
-
-        elif t1 == ast.SelectStmt:
-            table_name  = f'{node.from_clause[0].get_text()}'
-            select_stmt = f'res = self.find({table_name}).filter(F1).one()'
-
-            c1 = node.where_clause
-            left = c1.left.get_text()
-            right = c1.right.get_text()
-            op = c1.op.get_text()
-            if op == '=':
-                op = '=='
-            filter = f'F1 = {table_name}.{left} {op} {right}'
-            logger.info (f'{sun} {filter}')
-            logger.info (f'{sun} {select_stmt}')
-
-            assigns = []
-            try:
-                for x,y in zip(node.target_list,node.into_clause):
-                    cname = x.get_text()
-                    varname = y.get_text()
-                    assigns.append(f'{varname} = res.{cname}')
-            except Exception as inst:
-                logger.info (f'{cross_mark} {inst}')
-                logger.info (f'{cross_mark} {dump(node)}')
-
-            for astmt in assigns:
-                logger.info (f'{sun} {astmt}')
 
         # doesn't recognize ast.Create_procedure_body as a class type to be compared to
         # (Dynamic class?) , so match the string instead
         elif 'Create_procedure_body' in str(t1):
-            logger.info(dump(node))
             pname = node.procedure_name.get_text()
             plist = []
             for item in node.parameter:
                 plist.append (item.parameter_name.get_text())
-                # logger.info (item.type_spec.get_text())
             # Generate Python method definition
-            logger.info (f'{sun} def {pname}({",".join(plist)}):')
+            print  (f'def {pname}({",".join(plist)}): {sun}')
+            for cnode in node.children:
+                if 'ast.Body' in str(type(cnode)):
+                    for snode in iter_child_nodes(cnode):
+                        if type(snode) == ast.SelectStmt:
+                            python_code = process_select(snode)
+                            for item in python_code:
+                                print (item)
+                        elif type(snode) == ast.InsertStmt:
+                            python_code = process_insert(snode)
+                            for item in python_code:
+                                print (item)
         else:
             pass
             # if t1 == ast.Create_procedure_body:
